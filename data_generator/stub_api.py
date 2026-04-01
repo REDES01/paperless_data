@@ -12,6 +12,7 @@ Endpoints:
 
 import io
 import json
+import os
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -26,8 +27,6 @@ from confluent_kafka import Producer
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-import os
-
 DB_DSN = os.getenv("DB_DSN", "host=postgres dbname=paperless user=user password=paperless_postgres")
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio:9000")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "admin")
@@ -35,6 +34,9 @@ MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "paperless_minio")
 KAFKA_BROKER = os.getenv("KAFKA_BROKER", "redpanda:9092")
 
 app = FastAPI(title="Paperless Stub API")
+
+# Register UUID adapter so psycopg2 handles UUID arrays properly
+psycopg2.extras.register_uuid()
 
 # ── Clients ────────────────────────────────────
 _pg = None
@@ -139,7 +141,6 @@ async def submit_correction(req: CorrectionRequest):
 
     conn = get_pg()
     with conn.cursor() as cur:
-        # Get original text
         cur.execute("SELECT htr_output FROM handwritten_regions WHERE id = %s", (req.region_id,))
         row = cur.fetchone()
         original = row[0] if row else ""
@@ -175,11 +176,10 @@ async def search_documents(req: SearchRequest):
     session_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
-    # Simulate returning some random document IDs from the database
     conn = get_pg()
     with conn.cursor() as cur:
         cur.execute("SELECT id FROM documents ORDER BY RANDOM() LIMIT 5")
-        result_ids = [str(row[0]) for row in cur.fetchall()]
+        result_ids = [row[0] for row in cur.fetchall()]  # keep as UUID objects
 
         cur.execute(
             """INSERT INTO query_sessions
@@ -188,15 +188,18 @@ async def search_documents(req: SearchRequest):
             (session_id, req.query_text, req.user_id, req.is_test_account, result_ids),
         )
 
+    # Convert to strings for JSON response
+    result_id_strs = [str(r) for r in result_ids]
+
     publish("paperless.queries", {
         "session_id": session_id,
         "query_text": req.query_text,
         "queried_at": now,
-        "result_doc_ids": result_ids,
+        "result_doc_ids": result_id_strs,
     })
 
     log.info(f"Search '{req.query_text}' → {len(result_ids)} results")
-    return {"session_id": session_id, "result_doc_ids": result_ids}
+    return {"session_id": session_id, "result_doc_ids": result_id_strs}
 
 
 # ── Feedback endpoint ──────────────────────────
