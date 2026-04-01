@@ -1,0 +1,27 @@
+{
+  "title": "Paperless-ngx ML Data Platform",
+  "short_description": "Data platform for Paperless-ngx ML features: HTR and semantic search.",
+  "long_description": "Data layer for a document management platform built on Paperless-ngx, extended with handwriting text recognition (HTR) and semantic search. Includes PostgreSQL, MinIO object storage, Redpanda event streaming, Qdrant vector database, and Airflow batch pipelines. Ingests IAM handwriting and SQuAD 2.0 datasets, runs a synthetic traffic generator, computes online features for real-time inference, and produces versioned Iceberg training datasets.",
+  "authors": [
+    {
+      "name": "Elnath Zhao",
+      "institution": "NYU Tandon"
+    },
+    {
+      "name": "Dongting Gao",
+      "institution": "NYU Tandon"
+    },
+    {
+      "name": "Yikai Sun",
+      "institution": "NYU Tandon"
+    }
+  ],
+  "tags": [
+    "machine-learning",
+    "data-platform",
+    "mlops",
+    "document-management",
+    "chameleon"
+  ],
+  "environment_type": "chameleon_jupyterlab"
+}

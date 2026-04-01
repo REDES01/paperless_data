@@ -1,5 +1,3 @@
-version: "3.9"
-
 # ──────────────────────────────────────────────
 #  Paperless-ngx ML Data Platform
 #  Services: PostgreSQL, MinIO, Redpanda, Qdrant
