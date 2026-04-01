@@ -1,0 +1,11 @@
+{
+  "document_id": "a3f7c2e1-9b4d-4e8a-b5c6-1234567890ab",
+  "page_id": "b8e2d4f6-7a3c-4b1e-9d5f-abcdef012345",
+  "region_id": "c9d3e5a7-6b2f-4c0d-8e4a-fedcba987654",
+  "crop_s3_url": "s3://paperless-images/documents/a3f7c2e1/regions/c9d3e5a7.png",
+  "image_width": 2467,
+  "image_height": 128,
+  "image_format": "PNG",
+  "source": "user_upload",
+  "uploaded_at": "2025-04-01T14:32:00Z"
+}

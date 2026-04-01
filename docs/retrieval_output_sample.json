@@ -1,0 +1,27 @@
+{
+  "session_id": "d4e5f6a7-8b9c-4d0e-1f2a-3b4c5d6e7f8a",
+  "query_text": "budget report 2024",
+  "results": [
+    {
+      "document_id": "a3f7c2e1-9b4d-4e8a-b5c6-1234567890ab",
+      "chunk_index": 2,
+      "chunk_text": "The fiscal year 2024 budget allocates $2.3M to laboratory equipment upgrades across three departments.",
+      "similarity_score": 0.91
+    },
+    {
+      "document_id": "f1e2d3c4-b5a6-4978-8d6e-5f4a3b2c1d0e",
+      "chunk_index": 0,
+      "chunk_text": "Annual budget summary for the College of Engineering, prepared for the provost's review.",
+      "similarity_score": 0.84
+    },
+    {
+      "document_id": "9a8b7c6d-5e4f-4321-0fed-cba987654321",
+      "chunk_index": 5,
+      "chunk_text": "Departmental spending report Q3-Q4 2024 showing travel and conference expenditures.",
+      "similarity_score": 0.79
+    }
+  ],
+  "fallback_to_keyword": false,
+  "model_version": "retrieval_v1",
+  "inference_time_ms": 28
+}
