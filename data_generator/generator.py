@@ -13,6 +13,7 @@ Usage:
 
 import argparse
 import io
+import uuid
 import json
 import random
 import time
@@ -73,13 +74,12 @@ def generate_synthetic_page() -> bytes:
     img = Image.new("RGB", (width, height), color=(252, 251, 248))
     draw = ImageDraw.Draw(img)
 
-    # Add some "scanned document" artifacts
     # Header
     draw.text((50, 40), fake.company(), fill=(30, 30, 30))
     draw.text((50, 70), fake.address().replace("\n", ", "), fill=(80, 80, 80))
     draw.line([(50, 100), (800, 100)], fill=(150, 150, 150), width=2)
 
-    # Body text (simulating typed content)
+    # Body text
     y = 130
     for _ in range(random.randint(8, 20)):
         line = fake.sentence(nb_words=random.randint(6, 14))
@@ -88,14 +88,14 @@ def generate_synthetic_page() -> bytes:
         if y > 900:
             break
 
-    # Add some "handwritten" scribbles (lines simulating handwriting)
+    # Handwritten scribbles
     for _ in range(random.randint(1, 3)):
         x_start = random.randint(50, 400)
         y_start = random.randint(200, 800)
         points = [(x_start + i * 8, y_start + random.randint(-3, 3)) for i in range(random.randint(10, 30))]
         draw.line(points, fill=(20, 20, 150), width=2)
 
-    # Add margin note
+    # Margin note
     if random.random() < 0.4:
         note_y = random.randint(200, 700)
         draw.text((650, note_y), random.choice(CORRECTION_TEXTS)[:20], fill=(180, 30, 30))
@@ -105,9 +105,13 @@ def generate_synthetic_page() -> bytes:
     return buf.getvalue()
 
 
+# Pre-generate 10 stable user UUIDs
+_USER_IDS = [str(uuid.uuid5(uuid.NAMESPACE_DNS, f"user-{i}")) for i in range(1, 11)]
+
+
 def generate_user_id() -> str:
-    """Generate a consistent set of ~10 synthetic users."""
-    return f"user-{random.randint(1, 10):03d}"
+    """Pick from a consistent set of ~10 synthetic users."""
+    return random.choice(_USER_IDS)
 
 
 # ── Traffic generation ─────────────────────────
@@ -221,10 +225,10 @@ class TrafficGenerator:
     def run(self, rate: float, duration: int):
         """
         Run the traffic generator.
-        
+
         rate: average events per second
         duration: total runtime in seconds
-        
+
         Traffic pattern:
         - First 20% of time: mostly uploads (building up documents)
         - Middle 60%: mixed traffic
@@ -239,15 +243,11 @@ class TrafficGenerator:
         while elapsed < duration:
             progress = elapsed / duration
 
-            # Adjust action weights based on progress
             if progress < 0.2:
-                # Early: mostly uploads
                 weights = [0.7, 0.1, 0.15, 0.05]
             elif progress < 0.8:
-                # Middle: balanced
                 weights = [0.25, 0.2, 0.35, 0.2]
             else:
-                # Late: more searches and feedback
                 weights = [0.1, 0.15, 0.4, 0.35]
 
             action = random.choices(
@@ -257,7 +257,6 @@ class TrafficGenerator:
 
             action()
 
-            # Sleep with jitter
             sleep_time = max(0.1, (1.0 / rate) + random.uniform(-0.2, 0.2))
             time.sleep(sleep_time)
             elapsed = time.time() - start
