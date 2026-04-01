@@ -1,7 +1,7 @@
 """
 Ingest SQuAD 2.0 → MinIO
-Downloads directly from the SQuAD website, formats into (query, passage, label) triplets
-for training a bi-encoder retrieval model.
+Downloads from rajpurkar.github.io (or reads from local cache),
+formats into (query, passage, label) triplets for training a bi-encoder retrieval model.
 Writes Parquet shards to paperless-datalake/warehouse/squad_dataset/{split}/
 """
 
@@ -12,6 +12,7 @@ import logging
 import hashlib
 import random
 import urllib.request
+from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -28,10 +29,16 @@ MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "paperless_minio")
 BUCKET = "paperless-datalake"
 PREFIX = "warehouse/squad_dataset"
 SHARD_SIZE = 2000
+CACHE_DIR = os.getenv("CACHE_DIR", "/tmp/squad_cache")
 
 SQUAD_URLS = {
     "train": "https://rajpurkar.github.io/SQuAD-explorer/dataset/train-v2.0.json",
     "validation": "https://rajpurkar.github.io/SQuAD-explorer/dataset/dev-v2.0.json",
+}
+
+SQUAD_FILENAMES = {
+    "train": "train-v2.0.json",
+    "validation": "dev-v2.0.json",
 }
 
 
@@ -44,12 +51,29 @@ def get_minio_client() -> Minio:
     )
 
 
-def download_squad(url: str) -> list[dict]:
-    """Download SQuAD JSON and flatten into a list of {question, context, is_impossible}."""
-    log.info(f"Downloading {url} ...")
-    with urllib.request.urlopen(url) as resp:
-        data = json.loads(resp.read().decode())
+def load_squad_json(split: str) -> dict:
+    """Load SQuAD JSON from local cache if available, otherwise download."""
+    cache_path = Path(CACHE_DIR) / SQUAD_FILENAMES[split]
 
+    if cache_path.exists():
+        log.info(f"Loading {split} from cache: {cache_path}")
+        with open(cache_path, "r") as f:
+            return json.load(f)
+
+    url = SQUAD_URLS[split]
+    log.info(f"Cache miss — downloading {split} from {url} ...")
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    with urllib.request.urlopen(url) as resp:
+        raw = resp.read()
+    # Save to cache for future runs
+    with open(cache_path, "wb") as f:
+        f.write(raw)
+    log.info(f"Saved to cache: {cache_path}")
+    return json.loads(raw.decode())
+
+
+def flatten_squad(data: dict) -> list[dict]:
+    """Flatten SQuAD JSON into a list of {question, context, is_impossible}."""
     samples = []
     for article in data["data"]:
         for paragraph in article["paragraphs"]:
@@ -171,9 +195,10 @@ def main():
     if not client.bucket_exists(BUCKET):
         client.make_bucket(BUCKET)
 
-    for split, url in SQUAD_URLS.items():
-        samples = download_squad(url)
-        log.info(f"Downloaded {split}: {len(samples)} QA pairs")
+    for split in SQUAD_URLS:
+        data = load_squad_json(split)
+        samples = flatten_squad(data)
+        log.info(f"Loaded {split}: {len(samples)} QA pairs")
         ingest_split(client, samples, split)
 
     upload_metadata(client)

@@ -2,7 +2,7 @@
 ## Paperless-ngx ML Platform — Data Team
 
 **Team:** Dongting Gao (Training), Yikai Sun (Serving), Elnath Zhao (Data)  
-**Version:** 1.0
+**Version:** 1.1
 
 ---
 
@@ -98,6 +98,19 @@ created_at      TIMESTAMPTZ DEFAULT NOW()
 ```
 Written on user interaction with search results. `click` is an implicit positive signal; `thumbs_up` / `thumbs_down` are explicit. Only explicit feedback is used for retrieval retraining (see Section 5).
 
+**`dataset_registry`**
+```
+id              UUID        PRIMARY KEY DEFAULT gen_random_uuid()
+name            TEXT        NOT NULL
+version         TEXT
+download_url    TEXT
+downloaded_at   TIMESTAMPTZ DEFAULT NOW()
+record_count    INTEGER
+s3_path         TEXT
+license         TEXT
+```
+Records the provenance of every external dataset ingested into the platform, enabling lineage tracking from training data back to source.
+
 ---
 
 ### 2.2 MinIO — Object Storage
@@ -119,27 +132,47 @@ All uploaded document images. Written once at upload time, never modified. Soft-
 ```
 warehouse/
   iam_dataset/
-    train/    Parquet files — IAM line images (base64) + ground-truth text
-    val/
-    test/
+    train/          Parquet shards — IAM line images (PNG binary) + ground-truth text
+    validation/     Parquet shards — validation split
+    test/           Parquet shards — test split
+    train_augmented/      Augmented training images (3x synthetic expansion)
+    validation_augmented/ Augmented validation images
+    test_augmented/       Augmented test images
+    metadata.json   Dataset provenance and schema info
   squad_dataset/
-    train/    Parquet files — (question, passage, label) triplets
-    val/
+    train/          Parquet shards — (triplet_id, query, passage, label) retrieval triplets
+    validation/     Parquet shards — validation split
+    metadata.json   Dataset provenance and schema info
   htr_training/
-    data/     Parquet files — versioned HTR fine-tuning pairs
-    metadata/ Iceberg metadata and manifests
+    data/           Parquet files — versioned HTR fine-tuning pairs
+    metadata/       Iceberg metadata and manifests
   retrieval_training/
-    data/     Parquet files — versioned retrieval triplets
-    metadata/ Iceberg metadata and manifests
+    data/           Parquet files — versioned retrieval triplets
+    metadata/       Iceberg metadata and manifests
 ```
 
 **`paperless-staging`**
 ```
-iam_raw/      Downloaded IAM archive before processing
-squad_raw/    Downloaded SQuAD JSON before processing
-augmented/    Augmented HTR images produced by ingestion pipeline
+temp/             Temporary files during ETL processing
 ```
 Temporary staging area for ETL jobs. Cleared after successful ingestion.
+
+#### IAM Dataset Parquet Schema
+```
+image_id        STRING    Unique identifier (e.g., "train_000042")
+image_png       BINARY    Raw PNG bytes of the handwriting line image
+transcription   STRING    Ground-truth text transcription
+split           STRING    'train' | 'validation' | 'test' | 'train_augmented' | ...
+```
+
+#### SQuAD Dataset Parquet Schema
+```
+triplet_id      STRING    MD5-derived unique ID for deduplication
+query           STRING    Question text from SQuAD 2.0
+passage         STRING    Context paragraph
+label           INT32     1 = relevant (answerable), 0 = irrelevant (unanswerable or mismatched)
+split           STRING    'train' | 'validation'
+```
 
 ---
 
@@ -316,6 +349,25 @@ Airflow — runs daily
                      (new snapshot)
 ```
 
+### 3.4 Ingestion pipeline (external data)
+
+```
+External datasets
+        │
+        ├─── IAM Handwriting (HuggingFace: Teklia/IAM-line)
+        │         1. Download via HuggingFace datasets library
+        │         2. Extract line images as PNG binary + transcription text
+        │         3. Write Parquet shards → MinIO paperless-datalake/warehouse/iam_dataset/{split}/
+        │         4. Synthetic expansion: rotation, noise, contrast, blur (3x)
+        │            → write to {split}_augmented/
+        │
+        └─── SQuAD 2.0 (rajpurkar.github.io)
+                  1. Download train-v2.0.json and dev-v2.0.json directly
+                  2. Flatten articles → QA pairs
+                  3. Format as retrieval triplets with hard negative mining
+                  4. Write Parquet shards → MinIO paperless-datalake/warehouse/squad_dataset/{split}/
+```
+
 ---
 
 ## 4. Versioning and Lineage
@@ -333,7 +385,10 @@ Every Iceberg table write produces a new snapshot. Before each training run, the
 
 This `snapshot_id` is stored with the model artifact, enabling exact reproduction of the training dataset for any past model version by pointing PyIceberg at that specific snapshot.
 
-For the IAM and SQuAD external datasets, lineage is recorded in the Iceberg table `source` column and in a separate `dataset_registry` PostgreSQL table:
+For the IAM and SQuAD external datasets, lineage is recorded in two places:
+
+1. **`metadata.json`** uploaded alongside the Parquet shards in MinIO, containing the source URL, download timestamp, record counts, and schema.
+2. **`dataset_registry`** PostgreSQL table, recording the provenance of every external dataset:
 
 ```
 dataset_registry
@@ -372,6 +427,7 @@ dataset_registry
 | HTR preprocessing | `document_pages`, `handwritten_regions` (PG); page + crop images (MinIO) | On `paperless.uploads` event |
 | Document indexing | `document_chunks` (Qdrant) | After HTR preprocessing completes |
 | Re-indexing service | `document_chunks` (Qdrant) | On `paperless.corrections` event |
-| Ingestion pipeline | IAM + SQuAD Parquet (MinIO) | One-shot on initial setup; re-run for updates |
+| Ingestion pipeline | IAM + SQuAD Parquet shards (MinIO); `dataset_registry` (PG) | One-shot on initial setup; re-run for updates |
+| Augmentation pipeline | Augmented IAM Parquet shards (MinIO) | After IAM ingestion; re-run for updates |
 | Airflow HTR DAG | `htr_training.fine_tune_pairs` (Iceberg) | Daily |
 | Airflow retrieval DAG | `retrieval_training.triplets` (Iceberg) | Daily |

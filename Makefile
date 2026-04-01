@@ -1,9 +1,10 @@
 COMPOSE = docker compose -f docker/docker-compose.yaml
+CACHE_DIR = $(HOME)/paperless_cache
 
 .PHONY: up down restart status logs clean
 .PHONY: up-db up-storage up-stream up-vector
 .PHONY: check-pg check-minio check-redpanda check-qdrant
-.PHONY: ingest ingest-iam ingest-squad augment-iam
+.PHONY: ingest ingest-iam ingest-squad augment-iam download-cache
 
 # ── Lifecycle ─────────────────────────────────
 
@@ -45,6 +46,18 @@ up-vector:
 
 # ── Ingestion Pipeline ────────────────────────
 
+download-cache:
+	@mkdir -p $(CACHE_DIR)
+	@test -f $(CACHE_DIR)/train-v2.0.json || \
+		(echo "Downloading SQuAD train..." && \
+		 wget -q -O $(CACHE_DIR)/train-v2.0.json \
+		 https://rajpurkar.github.io/SQuAD-explorer/dataset/train-v2.0.json)
+	@test -f $(CACHE_DIR)/dev-v2.0.json || \
+		(echo "Downloading SQuAD dev..." && \
+		 wget -q -O $(CACHE_DIR)/dev-v2.0.json \
+		 https://rajpurkar.github.io/SQuAD-explorer/dataset/dev-v2.0.json)
+	@echo "Cache ready: $(CACHE_DIR)"
+
 ingest: ingest-iam ingest-squad augment-iam
 	@echo "Full ingestion pipeline complete."
 
@@ -56,12 +69,14 @@ ingest-iam:
 		-e MINIO_SECRET_KEY=paperless_minio \
 		paperless-ingest python ingest_iam.py
 
-ingest-squad:
+ingest-squad: download-cache
 	docker build -t paperless-ingest ./ingestion
 	docker run --rm --network docker_default \
 		-e MINIO_ENDPOINT=minio:9000 \
 		-e MINIO_ACCESS_KEY=admin \
 		-e MINIO_SECRET_KEY=paperless_minio \
+		-e CACHE_DIR=/cache \
+		-v $(CACHE_DIR):/cache:ro \
 		paperless-ingest python ingest_squad.py
 
 augment-iam:
