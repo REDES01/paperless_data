@@ -18,6 +18,7 @@ CHI_BUCKET ?= paperless-chi
 .PHONY: generate generate-api generate-traffic generate-stop
 .PHONY: demo-retrieval demo-htr
 .PHONY: batch batch-htr batch-retrieval
+.PHONY: validate chi-validate
 
 # ── Lifecycle ─────────────────────────────────
 
@@ -227,6 +228,26 @@ chi-batch-retrieval:
 		-e MINIO_SECURE=true \
 		-e MINIO_BUCKET=$(CHI_BUCKET) \
 		paperless-batch python batch_retrieval.py
+
+# ── Quality Validation ─────────────────
+
+validate:
+	docker build -t paperless-ingest ./ingestion
+	docker run --rm --network docker_default \
+		-e MINIO_ENDPOINT=minio:9000 \
+		-e MINIO_ACCESS_KEY=admin \
+		-e MINIO_SECRET_KEY=paperless_minio \
+		paperless-ingest python validate_augmentation.py
+
+chi-validate:
+	docker build -t paperless-ingest ./ingestion
+	docker run --rm \
+		-e MINIO_ENDPOINT=$(CHI_ENDPOINT) \
+		-e MINIO_ACCESS_KEY=$(CHI_ACCESS_KEY) \
+		-e MINIO_SECRET_KEY=$(CHI_SECRET_KEY) \
+		-e MINIO_SECURE=true \
+		-e MINIO_BUCKET=$(CHI_BUCKET) \
+		paperless-ingest python validate_augmentation.py
 
 # ── Health checks ─────────────────────────────
 

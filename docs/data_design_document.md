@@ -418,7 +418,42 @@ dataset_registry
 
 ---
 
-## 6. Services and Write Summary
+
+## 6. Synthetic Data Expansion
+
+Both external datasets (IAM and SQuAD) are under 5GB, so we expand them using synthetic data generation following class best practices.
+
+### IAM Handwriting — Image Augmentation
+
+**Seed data:** Teklia/IAM-line from HuggingFace (~10k real handwriting line images with ground-truth transcriptions). These are real handwritten samples from the IAM Handwriting Database — high-quality seeds with verified labels.
+
+**Generation pipeline:** For each original image, we generate 3 augmented copies (3x expansion) by applying:
+- Random rotation (±10°) — simulates slightly tilted scans
+- Brightness jitter (0.7–1.3x) — simulates varying scan exposure
+- Contrast jitter (0.7–1.3x) — simulates faded or dark ink
+- Gaussian blur (50% chance, radius 0.3–1.0) — simulates out-of-focus scans
+- Salt-and-pepper noise (30% chance) — simulates scanner artifacts
+
+**Label preservation:** Transcription text is unchanged — only the image is augmented. This is a standard approach for HTR because the augmentations simulate realistic scanning conditions without changing what the text says.
+
+### SQuAD 2.0 — Hard Negative Mining
+
+**Seed data:** SQuAD 2.0 from rajpurkar.github.io (~130k QA pairs). Answerable questions provide positive (query, passage) pairs; unanswerable questions provide natural hard negatives.
+
+**Generation pipeline:** For each positive pair, we generate one synthetic negative by pairing the query with a random passage from a different article. These mismatched pairs force the retrieval model to learn semantic relevance rather than surface-level keyword overlap.
+
+### Quality Validation
+
+Following class best practices, we run a quality validation step (`validate_augmentation.py`) after augmentation:
+
+1. **Blank image detection:** Flags images with pixel std < 5.0 or >95% white pixels — catches corrupted augmentations
+2. **Near-duplicate detection:** Uses perceptual hashing (average hash) to identify overly similar augmented samples. Allows at most 5% duplicates.
+3. **Distribution drift check:** Compares mean pixel values between original and augmented splits. If drift exceeds 15% (normalized), the quality gate fails — this catches augmentations that have shifted too far from the original distribution.
+4. **Quality report:** A `quality_report.json` is uploaded to the bucket alongside the data, documenting all checks and their pass/fail status.
+
+The pipeline follows the recommended pattern: real seeds → quality-checked generation → automated validation with quality gates.
+
+## 7. Services and Write Summary
 
 | Service | Writes to | When |
 |---|---|---|
