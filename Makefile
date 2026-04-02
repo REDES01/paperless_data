@@ -7,6 +7,7 @@ CACHE_DIR = $(HOME)/paperless_cache
 .PHONY: ingest ingest-iam ingest-squad augment-iam download-cache
 .PHONY: generate generate-api generate-traffic generate-stop
 .PHONY: demo-retrieval demo-htr
+.PHONY: batch batch-htr batch-retrieval
 
 # ── Lifecycle ─────────────────────────────────
 
@@ -129,6 +130,29 @@ demo-retrieval:
 demo-htr:
 	docker build -t paperless-htr -f ./online_features/Dockerfile.htr ./online_features
 	docker run --rm paperless-htr
+
+# ── Batch Pipeline ────────────────────────────
+
+batch: batch-htr batch-retrieval
+	@echo "Batch pipeline complete."
+
+batch-htr:
+	docker build -t paperless-batch ./batch_pipeline
+	docker run --rm --network docker_default \
+		-e DB_DSN="host=postgres dbname=paperless user=user password=paperless_postgres" \
+		-e MINIO_ENDPOINT=minio:9000 \
+		-e MINIO_ACCESS_KEY=admin \
+		-e MINIO_SECRET_KEY=paperless_minio \
+		paperless-batch python batch_htr.py
+
+batch-retrieval:
+	docker build -t paperless-batch ./batch_pipeline
+	docker run --rm --network docker_default \
+		-e DB_DSN="host=postgres dbname=paperless user=user password=paperless_postgres" \
+		-e MINIO_ENDPOINT=minio:9000 \
+		-e MINIO_ACCESS_KEY=admin \
+		-e MINIO_SECRET_KEY=paperless_minio \
+		paperless-batch python batch_retrieval.py
 
 # ── Health checks ─────────────────────────────
 
