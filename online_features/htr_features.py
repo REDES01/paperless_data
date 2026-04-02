@@ -17,9 +17,10 @@ import json
 import logging
 import uuid
 import time
+import random
 
 import numpy as np
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image, ImageFilter, ImageOps, ImageDraw
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -122,7 +123,7 @@ class HTRFeaturePipeline:
 
         w, h = gray.size
         aspect = w / h
-        new_w = int(TARGET_HEIGHT * aspect)
+        new_w = max(1, int(TARGET_HEIGHT * aspect))
         resized = gray.resize((new_w, TARGET_HEIGHT), Image.BILINEAR)
 
         # Normalize to [-1, 1] (same as Normalize(mean=0.5, std=0.5))
@@ -184,39 +185,102 @@ class HTRFeaturePipeline:
         return output
 
 
-def create_sample_page() -> Image.Image:
-    """Create a synthetic page image with text for demo purposes."""
-    from PIL import ImageDraw
-    from faker import Faker
-    import random
+def draw_handwriting_stroke(draw, x_start, y_start, text, color=(10, 10, 120), width=3):
+    """
+    Simulate a handwritten stroke by drawing thick, slightly wavy lines.
+    Each character is approximated as a series of connected line segments.
+    """
+    rng = random.Random(hash(text))
+    x = x_start
+    for char in text:
+        if char == " ":
+            x += 12
+            continue
+        # Draw a thick squiggly line for each character
+        char_width = rng.randint(8, 14)
+        points = []
+        for i in range(6):
+            px = x + i * (char_width // 5)
+            py = y_start + rng.randint(-4, 4)
+            points.append((px, py))
+        if len(points) >= 2:
+            draw.line(points, fill=color, width=width)
+        # Add descender/ascender strokes
+        if rng.random() < 0.3:
+            draw.line(
+                [(x + char_width // 2, y_start - 2), (x + char_width // 2, y_start + 12)],
+                fill=color, width=width
+            )
+        x += char_width + 2
 
-    fake = Faker()
+
+def create_sample_page() -> Image.Image:
+    """
+    Create a synthetic scanned document page with both typed text
+    (light gray, simulating printed content) and handwritten annotations
+    (dark, thick strokes that the detector should find).
+    """
     random.seed(42)
 
     width, height = 850, 1100
-    img = Image.new("RGB", (width, height), color=(252, 251, 248))
+    # Slightly off-white background (like a scanned page)
+    img = Image.new("RGB", (width, height), color=(245, 243, 238))
     draw = ImageDraw.Draw(img)
 
-    draw.text((50, 40), "ACADEMIC DEPARTMENT MEMO", fill=(30, 30, 30))
-    draw.text((50, 70), "From: Office of the Dean", fill=(80, 80, 80))
-    draw.line([(50, 100), (800, 100)], fill=(150, 150, 150), width=2)
+    # ── Typed/printed content (light — should NOT trigger detection) ──
+    # Use a medium gray so it stays above the binarization threshold
+    typed_color = (160, 160, 160)
 
-    y = 130
-    for _ in range(15):
-        line = fake.sentence(nb_words=random.randint(8, 14))
-        draw.text((50, y), line, fill=(40, 40, 40))
-        y += 24
+    draw.text((50, 30), "MEMORANDUM", fill=typed_color)
+    draw.text((50, 55), "TO: Faculty Senate  |  FROM: Office of the Dean", fill=typed_color)
+    draw.text((50, 80), "RE: FY2025 Budget Allocation  |  DATE: March 15, 2025", fill=typed_color)
+    draw.line([(50, 105), (800, 105)], fill=(200, 200, 200), width=1)
 
-    # Simulated handwritten annotations (darker ink, thicker)
-    draw.text((500, 200), "Approved - JW", fill=(20, 20, 150))
-    for i in range(20):
-        draw.point((500 + i * 6, 218 + random.randint(-2, 2)), fill=(20, 20, 150))
+    y = 120
+    typed_lines = [
+        "The proposed budget for fiscal year 2025 allocates resources across",
+        "three primary categories: laboratory equipment, faculty development,",
+        "and student support services. The total allocation is 2.3 million.",
+        "",
+        "Category A: Laboratory Equipment (45% of total)",
+        "  - Robotics lab upgrade: spectrometers and testing rigs",
+        "  - Chemistry department: new fume hoods and analytical instruments",
+        "",
+        "Category B: Faculty Development (30% of total)",
+        "  - Conference travel support for tenure-track faculty",
+        "  - Teaching innovation grants and sabbatical funding",
+        "",
+        "Category C: Student Support (25% of total)",
+        "  - Graduate research assistantships",
+        "  - Undergraduate mentoring program expansion",
+        "",
+        "Please review the attached detailed breakdown and provide",
+        "comments to the budget committee by April 1, 2025.",
+    ]
+    for line in typed_lines:
+        draw.text((50, y), line, fill=typed_color)
+        y += 22
 
-    draw.text((50, 600), "See revised numbers below", fill=(180, 30, 30))
-    for i in range(30):
-        draw.point((50 + i * 5, 618 + random.randint(-2, 2)), fill=(180, 30, 30))
+    # ── Handwritten annotations (dark, thick — SHOULD trigger detection) ──
 
-    draw.text((400, 900), "Return to sender - wrong dept", fill=(20, 80, 20))
+    # Annotation 1: margin note at top-right (blue ink)
+    draw_handwriting_stroke(draw, 550, 150, "Approved - JW", color=(10, 10, 100), width=3)
+    # Add underline
+    draw.line([(550, 168), (720, 168)], fill=(10, 10, 100), width=3)
+
+    # Annotation 2: inline note (red ink, like a correction)
+    draw_handwriting_stroke(draw, 80, 520, "Check these numbers!!", color=(140, 10, 10), width=3)
+    # Draw an arrow pointing up
+    draw.line([(80, 518), (80, 500)], fill=(140, 10, 10), width=2)
+    draw.line([(80, 500), (70, 510)], fill=(140, 10, 10), width=2)
+    draw.line([(80, 500), (90, 510)], fill=(140, 10, 10), width=2)
+
+    # Annotation 3: note at bottom (dark pencil)
+    draw_handwriting_stroke(draw, 100, 850, "Forward to dept chair for sign-off", color=(30, 30, 30), width=3)
+    draw_handwriting_stroke(draw, 100, 875, "before the April deadline", color=(30, 30, 30), width=3)
+
+    # Annotation 4: circled section (blue ink circle around a paragraph)
+    draw.ellipse([(30, 230), (810, 350)], outline=(10, 10, 100), width=3)
 
     return img
 
