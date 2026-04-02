@@ -1,0 +1,12 @@
+sentence-transformers==3.3.1
+qdrant-client==1.12.1
+psycopg2-binary==2.9.10
+minio==7.2.12
+Pillow==11.0.0
+numpy==1.26.4
+fastapi==0.115.0
+uvicorn==0.32.0
+python-multipart==0.0.17
+torch==2.5.1
+torchvision==0.20.1
+Faker==33.0.0

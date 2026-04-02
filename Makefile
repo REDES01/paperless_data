@@ -6,6 +6,7 @@ CACHE_DIR = $(HOME)/paperless_cache
 .PHONY: check-pg check-minio check-redpanda check-qdrant
 .PHONY: ingest ingest-iam ingest-squad augment-iam download-cache
 .PHONY: generate generate-api generate-traffic generate-stop
+.PHONY: demo-retrieval demo-htr
 
 # ── Lifecycle ─────────────────────────────────
 
@@ -115,6 +116,20 @@ generate-traffic:
 generate-stop:
 	-docker stop datagen-api
 	-docker rm datagen-api
+
+# ── Online Feature Computation ────────────────
+
+demo-retrieval:
+	docker build -t paperless-features ./online_features
+	docker run --rm --network docker_default \
+		-e QDRANT_HOST=qdrant \
+		-e QDRANT_PORT=6333 \
+		paperless-features python retrieval_features.py
+
+demo-htr:
+	docker build -t paperless-features ./online_features
+	docker run --rm --network docker_default \
+		paperless-features python htr_features.py
 
 # ── Health checks ─────────────────────────────
 
