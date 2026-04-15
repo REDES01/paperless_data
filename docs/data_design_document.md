@@ -1,5 +1,6 @@
 # Data Design Document
-## Paperless-ngx ML Platform — Data Team
+
+## Paperless-ngx ML Platform — Data
 
 **Team:** Dongting Gao (Training), Yikai Sun (Serving), Elnath Zhao (Data)  
 **Version:** 1.1
@@ -25,6 +26,7 @@ This document describes the data architecture for the Paperless-ngx ML platform.
 #### Tables
 
 **`documents`**
+
 ```
 id              UUID        PRIMARY KEY
 filename        TEXT        NOT NULL
@@ -37,9 +39,11 @@ merged_text     TEXT
 is_test_doc     BOOLEAN     DEFAULT FALSE
 deleted_at      TIMESTAMPTZ
 ```
+
 Stores one row per uploaded document. `merged_text` is the concatenation of Tesseract OCR output and HTR output, and is the text encoded into the vector index. `source` distinguishes real uploads from synthetic traffic generator uploads and test documents.
 
 **`document_pages`**
+
 ```
 id              UUID        PRIMARY KEY
 document_id     UUID        REFERENCES documents(id)
@@ -51,9 +55,11 @@ htr_confidence  FLOAT
 htr_flagged     BOOLEAN     DEFAULT FALSE
 created_at      TIMESTAMPTZ DEFAULT NOW()
 ```
+
 One row per page. `image_s3_url` points to the page image in MinIO. `htr_flagged` is set when confidence falls below the threshold, triggering the user review UI.
 
 **`handwritten_regions`**
+
 ```
 id              UUID        PRIMARY KEY
 page_id         UUID        REFERENCES document_pages(id)
@@ -62,9 +68,11 @@ htr_output      TEXT
 htr_confidence  FLOAT
 created_at      TIMESTAMPTZ DEFAULT NOW()
 ```
+
 One row per detected handwritten region within a page. `crop_s3_url` points to the cropped region image in MinIO. This is the granular unit fed to the HTR model.
 
 **`htr_corrections`**
+
 ```
 id              UUID        PRIMARY KEY
 region_id       UUID        REFERENCES handwritten_regions(id)
@@ -75,9 +83,11 @@ corrected_at    TIMESTAMPTZ DEFAULT NOW()
 opted_in        BOOLEAN     DEFAULT TRUE
 excluded_from_training BOOLEAN DEFAULT FALSE
 ```
+
 Written when a user edits an HTR transcription. `opted_in` respects the user's data contribution preference. `excluded_from_training` is set by the batch pipeline for duplicates or policy-excluded records.
 
 **`query_sessions`**
+
 ```
 id              UUID        PRIMARY KEY
 query_text      TEXT        NOT NULL
@@ -86,9 +96,11 @@ user_id         UUID
 is_test_account BOOLEAN     DEFAULT FALSE
 result_doc_ids  UUID[]
 ```
+
 One row per search query. `result_doc_ids` captures the ranked list of documents returned, needed to identify shown-but-not-clicked negatives.
 
 **`search_feedback`**
+
 ```
 id              UUID        PRIMARY KEY
 session_id      UUID        REFERENCES query_sessions(id)
@@ -96,9 +108,11 @@ document_id     UUID        REFERENCES documents(id)
 feedback_type   VARCHAR(16) CHECK (feedback_type IN ('click', 'thumbs_up', 'thumbs_down'))
 created_at      TIMESTAMPTZ DEFAULT NOW()
 ```
+
 Written on user interaction with search results. `click` is an implicit positive signal; `thumbs_up` / `thumbs_down` are explicit. Only explicit feedback is used for retrieval retraining (see Section 5).
 
 **`dataset_registry`**
+
 ```
 id              UUID        PRIMARY KEY DEFAULT gen_random_uuid()
 name            TEXT        NOT NULL
@@ -109,6 +123,7 @@ record_count    INTEGER
 s3_path         TEXT
 license         TEXT
 ```
+
 Records the provenance of every external dataset ingested into the platform, enabling lineage tracking from training data back to source.
 
 ---
@@ -125,9 +140,11 @@ Records the provenance of every external dataset ingested into the platform, ena
 documents/{document_id}/page_{n}.png         Raw full-page scan images
 documents/{document_id}/regions/{region_id}.png  Cropped handwritten region images
 ```
+
 All uploaded document images. Written once at upload time, never modified. Soft-deleted documents retain their images until a cleanup job runs.
 
 **CHI@TACC bucket contents (under `warehouse/`):**
+
 ```
 warehouse/
   iam_dataset/
@@ -151,12 +168,15 @@ warehouse/
 ```
 
 #### Internal MinIO Bucket: `paperless-staging`
+
 ```
 temp/             Temporary files during ETL processing
 ```
+
 Temporary staging area for ETL jobs. Cleared after successful ingestion.
 
 #### IAM Dataset Parquet Schema
+
 ```
 image_id        STRING    Unique identifier (e.g., "train_000042")
 image_png       BINARY    Raw PNG bytes of the handwriting line image
@@ -165,6 +185,7 @@ split           STRING    'train' | 'validation' | 'test' | 'train_augmented' | 
 ```
 
 #### SQuAD Dataset Parquet Schema
+
 ```
 triplet_id      STRING    MD5-derived unique ID for deduplication
 query           STRING    Question text from SQuAD 2.0
@@ -185,6 +206,7 @@ split           STRING    'train' | 'validation'
 #### Collections
 
 **`document_chunks`**
+
 ```
 id:         UUID  (chunk-level, derived from document_id + chunk_index)
 vector:     float[768]   Dense embedding from bi-encoder
@@ -195,6 +217,7 @@ payload:
   uploaded_at:   TIMESTAMPTZ
   is_deleted:    BOOLEAN
 ```
+
 Each document is split into fixed-size overlapping text chunks (e.g., 256 tokens, 32-token stride). Each chunk is encoded independently and stored as one point. At query time, the query vector is matched against all non-deleted chunk vectors using HNSW approximate nearest-neighbor search; top-k chunks are returned and deduplicated to document level.
 
 ---
@@ -207,12 +230,12 @@ Each document is split into fixed-size overlapping text chunks (e.g., 256 tokens
 
 #### Topics
 
-| Topic | Event schema | Consumers |
-|---|---|---|
-| `paperless.uploads` | `{document_id, page_count, uploaded_at, source}` | HTR preprocessing service, document indexing service |
-| `paperless.corrections` | `{region_id, document_id, corrected_text, corrected_at, opted_in}` | Re-indexing service, Airflow HTR DAG |
-| `paperless.queries` | `{session_id, query_text, queried_at, result_doc_ids}` | Airflow retrieval DAG |
-| `paperless.feedback` | `{session_id, document_id, feedback_type, created_at}` | Airflow retrieval DAG |
+| Topic                   | Event schema                                                       | Consumers                                            |
+| ----------------------- | ------------------------------------------------------------------ | ---------------------------------------------------- |
+| `paperless.uploads`     | `{document_id, page_count, uploaded_at, source}`                   | HTR preprocessing service, document indexing service |
+| `paperless.corrections` | `{region_id, document_id, corrected_text, corrected_at, opted_in}` | Re-indexing service, Airflow HTR DAG                 |
+| `paperless.queries`     | `{session_id, query_text, queried_at, result_doc_ids}`             | Airflow retrieval DAG                                |
+| `paperless.feedback`    | `{session_id, document_id, feedback_type, created_at}`             | Airflow retrieval DAG                                |
 
 ---
 
@@ -224,6 +247,7 @@ Each document is split into fixed-size overlapping text chunks (e.g., 256 tokens
 **Storage backend:** MinIO (`paperless-datalake/warehouse/`).
 
 #### `htr_training.fine_tune_pairs`
+
 ```
 region_id        STRING    Source region UUID
 crop_s3_url      STRING    Path to cropped image in MinIO
@@ -237,6 +261,7 @@ snapshot_id      BIGINT    Iceberg snapshot this row was written in
 ```
 
 #### `retrieval_training.triplets`
+
 ```
 session_id       STRING    Source query session UUID
 query_text       STRING    User search query
@@ -405,19 +430,20 @@ dataset_registry
 ## 5. Candidate Selection and Leakage Prevention
 
 ### HTR training pairs
+
 - **Include:** Only `htr_corrections` rows where `corrected_text != ''` and `opted_in = true` (user actively typed a correction, not just dismissed the flag)
 - **Exclude:** Test/synthetic documents (`source != 'user_upload'`), duplicate region scans (same `writer_id` + identical `corrected_text` within 7 days), documents where `deleted_at` is set
 - **Split:** Time-based — train on corrections older than 14 days, validate on the most recent 14 days. This prevents the model from training on styles it will be evaluated on.
 - **Leakage prevention:** Training inputs are always raw crop images, never the model's own prior HTR output. Preprocessing (normalization, augmentation parameters) is fitted on the training split only.
 
 ### Retrieval training triplets
+
 - **Include:** Only sessions with explicit feedback (`thumbs_up` or `thumbs_down`) or confirmed clicks; exclude sessions from test accounts (`is_test_account = true`)
 - **Exclude:** Sessions where the user issued the same query within 5 minutes (likely a reformulation, not independent signal), documents with `deleted_at` set at training time
 - **Split:** Time-based — train on sessions older than 7 days, validate on the most recent 7 days
 - **Leakage prevention:** `pos_chunk_text` and `neg_chunk_text` are snapshotted from PostgreSQL at `query_date`, not from current document state. This ensures the training example reflects what the model would have seen at inference time, not a later-edited version of the document.
 
 ---
-
 
 ## 6. Synthetic Data Expansion
 
@@ -428,6 +454,7 @@ Both external datasets (IAM and SQuAD) are under 5GB, so we expand them using sy
 **Seed data:** Teklia/IAM-line from HuggingFace (~10k real handwriting line images with ground-truth transcriptions). These are real handwritten samples from the IAM Handwriting Database — high-quality seeds with verified labels.
 
 **Generation pipeline:** For each original image, we generate 3 augmented copies (3x expansion) by applying:
+
 - Random rotation (±10°) — simulates slightly tilted scans
 - Brightness jitter (0.7–1.3x) — simulates varying scan exposure
 - Contrast jitter (0.7–1.3x) — simulates faded or dark ink
@@ -455,13 +482,13 @@ The pipeline follows the recommended pattern: real seeds → quality-checked gen
 
 ## 7. Services and Write Summary
 
-| Service | Writes to | When |
-|---|---|---|
-| API / Paperless-ngx | `documents`, `query_sessions`, `search_feedback` (PG); `paperless.*` topics (Redpanda) | On every upload, query, feedback |
-| HTR preprocessing | `document_pages`, `handwritten_regions` (PG); page + crop images (MinIO) | On `paperless.uploads` event |
-| Document indexing | `document_chunks` (Qdrant) | After HTR preprocessing completes |
-| Re-indexing service | `document_chunks` (Qdrant) | On `paperless.corrections` event |
-| Ingestion pipeline | IAM + SQuAD Parquet shards (MinIO); `dataset_registry` (PG) | One-shot on initial setup; re-run for updates |
-| Augmentation pipeline | Augmented IAM Parquet shards (MinIO) | After IAM ingestion; re-run for updates |
-| Airflow HTR DAG | `htr_training.fine_tune_pairs` (Iceberg) | Daily |
-| Airflow retrieval DAG | `retrieval_training.triplets` (Iceberg) | Daily |
+| Service               | Writes to                                                                              | When                                          |
+| --------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------- |
+| API / Paperless-ngx   | `documents`, `query_sessions`, `search_feedback` (PG); `paperless.*` topics (Redpanda) | On every upload, query, feedback              |
+| HTR preprocessing     | `document_pages`, `handwritten_regions` (PG); page + crop images (MinIO)               | On `paperless.uploads` event                  |
+| Document indexing     | `document_chunks` (Qdrant)                                                             | After HTR preprocessing completes             |
+| Re-indexing service   | `document_chunks` (Qdrant)                                                             | On `paperless.corrections` event              |
+| Ingestion pipeline    | IAM + SQuAD Parquet shards (MinIO); `dataset_registry` (PG)                            | One-shot on initial setup; re-run for updates |
+| Augmentation pipeline | Augmented IAM Parquet shards (MinIO)                                                   | After IAM ingestion; re-run for updates       |
+| Airflow HTR DAG       | `htr_training.fine_tune_pairs` (Iceberg)                                               | Daily                                         |
+| Airflow retrieval DAG | `retrieval_training.triplets` (Iceberg)                                                | Daily                                         |
