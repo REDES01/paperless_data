@@ -30,6 +30,8 @@ import io
 import json
 import logging
 import hashlib
+
+from quality import filter_candidates
 from datetime import datetime, timezone, timedelta
 
 import psycopg2
@@ -97,7 +99,7 @@ def fetch_candidates(conn) -> list[dict]:
         WHERE c.opted_in = true
           AND c.corrected_text != ''
           AND c.excluded_from_training = false
-          AND d.source = 'synthetic'
+          AND d.source = 'user_upload'
           AND d.deleted_at IS NULL
     )
     SELECT
@@ -188,7 +190,8 @@ def upload_shards(client: Minio, table: pa.Table, version: str, split: str):
 
 
 def upload_manifest(client: Minio, version: str, train_count: int, val_count: int,
-                    train_shards: int, val_shards: int):
+                    train_shards: int, val_shards: int,
+                    quality_report: dict | None = None):
     """Write a manifest file recording this snapshot's metadata."""
     manifest = {
         "version": version,
@@ -215,6 +218,7 @@ def upload_manifest(client: Minio, version: str, train_count: int, val_count: in
             "train": train_shards,
             "val": val_shards,
         },
+        "data_quality": quality_report or {},
     }
 
     buf = io.BytesIO(json.dumps(manifest, indent=2).encode())
@@ -242,14 +246,22 @@ def main():
         log.warning("No eligible corrections found. Exiting.")
         return
 
-    # Step 2: Time-based split
-    train_data, val_data = time_split(candidates, VAL_WINDOW_DAYS)
-
-    # Step 3: Build Arrow tables
+    # Step 1a: Apply additional data-quality filters beyond the SQL-level
+    # candidate selection (no-op corrections, invalid crop URLs, MinIO
+    # misses, spam). See quality.py for the rules.
     mc = get_minio()
     if not mc.bucket_exists(BUCKET):
         mc.make_bucket(BUCKET)
+    candidates, quality_report = filter_candidates(candidates, minio_client=mc)
 
+    if not candidates:
+        log.warning("All candidates rejected by quality filters. Exiting.")
+        return
+
+    # Step 2: Time-based split
+    train_data, val_data = time_split(candidates, VAL_WINDOW_DAYS)
+
+    # Step 3: Build Arrow tables (mc already set up above)
     train_shards = 0
     val_shards = 0
 
@@ -265,7 +277,8 @@ def main():
 
     # Step 4: Write manifest
     manifest = upload_manifest(mc, version, len(train_data), len(val_data),
-                                train_shards, val_shards)
+                                train_shards, val_shards,
+                                quality_report=quality_report.as_dict())
 
     log.info(f"\nPipeline complete. Snapshot: {version}")
     log.info(f"  Train: {len(train_data)} corrections")
