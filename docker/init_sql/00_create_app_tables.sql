@@ -25,6 +25,15 @@ CREATE TABLE IF NOT EXISTS documents (
     paperless_doc_id INTEGER UNIQUE
 );
 
+-- Idempotent upgrade path for stacks whose `documents` table already exists
+-- (the CREATE TABLE IF NOT EXISTS above is a no-op in that case, so the
+-- column + UNIQUE constraint would otherwise never land). Safe to re-run
+-- on fresh databases too — both statements short-circuit when the column
+-- and index already exist.
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS paperless_doc_id INTEGER;
+CREATE UNIQUE INDEX IF NOT EXISTS documents_paperless_doc_id_key
+    ON documents(paperless_doc_id);
+
 -- ── Document pages ───────────────────────────
 CREATE TABLE IF NOT EXISTS document_pages (
     id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
