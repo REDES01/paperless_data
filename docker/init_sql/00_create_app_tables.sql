@@ -17,8 +17,22 @@ CREATE TABLE IF NOT EXISTS documents (
     htr_text        TEXT,
     merged_text     TEXT,
     is_test_doc     BOOLEAN     DEFAULT FALSE,
-    deleted_at      TIMESTAMPTZ
+    deleted_at      TIMESTAMPTZ,
+    -- External identifier from the upstream Paperless instance. Required by
+    -- the HTR consumer when re-processing documents, which uses
+    -- `ON CONFLICT (paperless_doc_id)` to upsert. UNIQUE also creates the
+    -- non-partial index that ON CONFLICT needs.
+    paperless_doc_id INTEGER UNIQUE
 );
+
+-- Idempotent upgrade path for stacks whose `documents` table already exists
+-- (the CREATE TABLE IF NOT EXISTS above is a no-op in that case, so the
+-- column + UNIQUE constraint would otherwise never land). Safe to re-run
+-- on fresh databases too — both statements short-circuit when the column
+-- and index already exist.
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS paperless_doc_id INTEGER;
+CREATE UNIQUE INDEX IF NOT EXISTS documents_paperless_doc_id_key
+    ON documents(paperless_doc_id);
 
 -- ── Document pages ───────────────────────────
 CREATE TABLE IF NOT EXISTS document_pages (
