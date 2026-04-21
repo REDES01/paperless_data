@@ -93,10 +93,10 @@ def load_iam_crops(mc: Minio, n: int) -> np.ndarray:
     Sample `n` IAM crops from the ingested Parquet shards.
 
     IAM Parquet schema (from ingestion/ingest_iam.py):
-        image_bytes  bytes  — PNG encoded
-        text         str    — transcription
-        split        str
-        writer_id    str
+        image_id       str    - unique identifier
+        image_png      bytes  - PNG encoded
+        transcription  str    - ground-truth text
+        split          str
 
     Returns an array of shape (n, 1, H, W), dtype float32, values in [0, 1].
     """
@@ -123,7 +123,7 @@ def load_iam_crops(mc: Minio, n: int) -> np.ndarray:
             resp.close()
             resp.release_conn()
 
-        for image_bytes in table.column("image_bytes").to_pylist():
+        for image_bytes in table.column("image_png").to_pylist():
             if len(crops) >= n:
                 break
             try:

@@ -70,7 +70,7 @@ MAX_BLANK_TEXT_FRAC      = 0.05        # ≤5% blank transcriptions/queries
 SQUAD_LABEL_BALANCE_TOL  = 0.20        # pos/(pos+neg) must be in [0.3, 0.7]
 
 # Expected Parquet columns, based on ingest_{iam,squad}.py.
-IAM_SCHEMA = {"image_bytes", "text", "split", "writer_id"}
+IAM_SCHEMA = {"image_id", "image_png", "transcription", "split"}
 SQUAD_SCHEMA = {"query", "passage", "label", "split"}
 
 # IAM images are line crops; heights are small, widths vary a lot.
@@ -202,9 +202,9 @@ def validate_iam(mc: Minio) -> DatasetReport:
     dims_ok = 0
     for row in sample:
         try:
-            img = Image.open(io.BytesIO(row["image_bytes"]))
+            img = Image.open(io.BytesIO(row["image_png"]))
             img.verify()
-            img2 = Image.open(io.BytesIO(row["image_bytes"]))  # verify() consumes
+            img2 = Image.open(io.BytesIO(row["image_png"]))  # verify() consumes
             w, h = img2.size
             openable += 1
             if (IAM_HEIGHT_BOUNDS[0] <= h <= IAM_HEIGHT_BOUNDS[1]
@@ -227,7 +227,7 @@ def validate_iam(mc: Minio) -> DatasetReport:
     )
 
     # I4 — text non-empty
-    blanks = sum(1 for r in all_rows if not (r.get("text") or "").strip())
+    blanks = sum(1 for r in all_rows if not (r.get("transcription") or "").strip())
     frac = blanks / total_rows if total_rows else 1.0
     report.add(
         "I4_text_nonempty",

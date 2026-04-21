@@ -2,3 +2,4 @@ psycopg2-binary==2.9.10
 minio==7.2.12
 pyarrow==18.1.0
 numpy==1.26.4
+Pillow==11.0.0
