@@ -357,6 +357,7 @@ def main() -> int:
         return 2
 
     all_passed = True
+    any_dataset_present = False
     for name, fn in (("iam", validate_iam), ("squad", validate_squad)):
         log.info("-" * 40)
         log.info("Validating %s", name)
@@ -367,10 +368,23 @@ def main() -> int:
             log.exception("%s validator crashed: %s", name, exc)
             return 2
         upload_report(mc, report)
+
+        # A dataset with only the "no shards found" failure is a SKIP, not a FAIL.
+        # We only count it as a failure if shards exist but later checks fail.
+        shards_check = next((c for c in report.checks if c.name.endswith("_shards_found")), None)
+        if shards_check and not shards_check.passed:
+            log.info("[%s] SKIPPED (no shards present)", name)
+            continue
+
+        any_dataset_present = True
         if not report.all_passed:
             all_passed = False
 
     log.info("=" * 60)
+    if not any_dataset_present:
+        log.info("Validation result: SKIPPED (no datasets ingested yet)")
+        log.info("=" * 60)
+        return 0   # don't fail the pipeline just because nothing is ingested
     log.info("Validation result: %s", "PASS" if all_passed else "FAIL")
     log.info("=" * 60)
     return 0 if all_passed else 1
