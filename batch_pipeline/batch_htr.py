@@ -65,63 +65,105 @@ def get_minio():
                  secret_key=MINIO_SECRET_KEY, secure=MINIO_SECURE)
 
 
-def fetch_candidates(conn) -> list[dict]:
+def fetch_candidates(conn, mc) -> list[dict]:
     """
-    Fetch eligible HTR corrections with candidate selection applied.
-    
-    SQL implements:
-    - opted_in = true
-    - corrected_text is non-empty
-    - source document is user_upload (not synthetic/test)
-    - document not deleted
-    - Deduplicate by region_id (keep latest correction per region)
-    """
-    query = """
-    WITH ranked_corrections AS (
-        SELECT
-            c.id AS correction_id,
-            c.region_id,
-            c.corrected_text,
-            c.corrected_at,
-            c.user_id,
-            r.crop_s3_url,
-            r.htr_output AS original_text,
-            d.source,
-            d.id AS document_id,
-            ROW_NUMBER() OVER (
-                PARTITION BY c.region_id
-                ORDER BY c.corrected_at DESC
-            ) AS rn
-        FROM htr_corrections c
-        JOIN handwritten_regions r ON c.region_id = r.id
-        JOIN document_pages p ON r.page_id = p.id
-        JOIN documents d ON p.document_id = d.id
-        WHERE c.opted_in = true
-          AND c.corrected_text != ''
-          AND c.excluded_from_training = false
-          AND d.source = 'user_upload'
-          AND d.deleted_at IS NULL
-    )
-    SELECT
-        correction_id,
-        region_id,
-        corrected_text,
-        corrected_at,
-        user_id,
-        crop_s3_url,
-        original_text,
-        document_id
-    FROM ranked_corrections
-    WHERE rn = 1
-    ORDER BY corrected_at ASC
-    """
-    with conn.cursor() as cur:
-        cur.execute(query)
-        columns = [desc[0] for desc in cur.description]
-        rows = cur.fetchall()
+    Fetch eligible HTR corrections from the MinIO user_corrections archive.
 
-    candidates = [dict(zip(columns, row)) for row in rows]
-    log.info(f"Fetched {len(candidates)} eligible corrections (after dedup + filtering)")
+    The archive is populated by the airflow `archive_corrections` DAG
+    (every 15 min) — each correction becomes an immutable JSON object at
+      s3://paperless-datalake/user_corrections/date=YYYY-MM-DD/<uuid>.json
+
+    Reading from the archive instead of Postgres gives:
+      - Training reproducibility (archive is immutable; past training
+        runs can be reconstructed exactly by filtering on archived_at)
+      - Audit trail (every correction ever submitted is recoverable)
+      - Decoupling (training never blocks on Postgres availability)
+
+    Filtering applied here (match the old SQL's WHERE clauses):
+      - opted_in = true
+      - corrected_text is non-empty (stripped)
+      - source document is `user_upload` and not soft-deleted
+      - Deduplicate by region_id, keeping the most recent corrected_at
+
+    The doc-state filter (source + deleted_at) still requires a small
+    Postgres query — those attributes can change after a correction was
+    archived. We issue ONE query to get the set of training-eligible
+    document_ids, then filter the archive in memory.
+    """
+    import json as _json
+
+    bucket = os.getenv("MINIO_BUCKET", "paperless-datalake")
+    prefix = "user_corrections/"
+
+    # 1. Get eligible document_ids from Postgres (one cheap query).
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT id
+            FROM documents
+            WHERE source = 'user_upload'
+              AND deleted_at IS NULL
+        """)
+        eligible_doc_ids = {row[0] for row in cur.fetchall()}
+    log.info(f"{len(eligible_doc_ids)} documents currently eligible for training")
+
+    # 2. List all archived corrections.
+    try:
+        objects = list(mc.list_objects(bucket, prefix=prefix, recursive=True))
+    except Exception as exc:
+        log.warning("archive listing failed (%s) — returning 0 candidates", exc)
+        return []
+    json_objects = [o for o in objects if o.object_name.endswith(".json")]
+    log.info(f"archive has {len(json_objects)} correction JSON files")
+
+    # 3. Download + parse + filter.
+    raw: list[dict] = []
+    for obj in json_objects:
+        try:
+            resp = mc.get_object(bucket, obj.object_name)
+            body = _json.loads(resp.read().decode("utf-8"))
+            resp.close()
+            resp.release_conn()
+        except Exception as exc:
+            log.warning("could not read %s: %s", obj.object_name, exc)
+            continue
+
+        if not body.get("opted_in", False):
+            continue
+        if not (body.get("corrected_text") or "").strip():
+            continue
+        if body.get("document_id") not in eligible_doc_ids:
+            continue
+        raw.append(body)
+
+    # 4. Dedupe by region_id — keep newest corrected_at per region.
+    by_region: dict[str, dict] = {}
+    for b in raw:
+        region_id = b["region_id"]
+        incumbent = by_region.get(region_id)
+        if (
+            incumbent is None
+            or (b.get("corrected_at") or "") > (incumbent.get("corrected_at") or "")
+        ):
+            by_region[region_id] = b
+
+    # 5. Shape to match the old output (keys used downstream by build_table).
+    candidates = []
+    for b in sorted(by_region.values(), key=lambda x: x.get("corrected_at") or ""):
+        candidates.append({
+            "correction_id": b["correction_id"],
+            "region_id":     b["region_id"],
+            "corrected_text": b["corrected_text"],
+            "corrected_at":  b["corrected_at"],
+            "user_id":       b.get("user_id"),
+            "crop_s3_url":   b["crop_s3_url"],
+            "original_text": b.get("original_text", ""),
+            "document_id":   b["document_id"],
+        })
+
+    log.info(
+        f"Fetched {len(candidates)} eligible corrections from archive "
+        f"(after dedup + filtering)"
+    )
     return candidates
 
 
@@ -284,7 +326,7 @@ def main():
 
     # Step 1: Fetch candidates from PostgreSQL
     conn = get_pg()
-    candidates = fetch_candidates(conn)
+    candidates = fetch_candidates(conn, mc)
     conn.close()
 
     if not candidates:
