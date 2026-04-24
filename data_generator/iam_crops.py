@@ -36,7 +36,7 @@ from minio import Minio
 log = logging.getLogger(__name__)
 
 IAM_BUCKET = os.environ.get("IAM_BUCKET", "paperless-datalake")
-IAM_PREFIX = os.environ.get("IAM_PREFIX", "iam_dataset/train/")
+IAM_PREFIX = os.environ.get("IAM_PREFIX", "warehouse/iam_dataset/train/")
 
 # How many crops to keep in memory. 500 is plenty of variety for a demo
 # and keeps RAM usage <50MB. The pool never refills — we draw with

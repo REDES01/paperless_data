@@ -47,7 +47,7 @@ services:
       MINIO_ACCESS_KEY: admin
       MINIO_SECRET_KEY: paperless_minio
       IAM_BUCKET:       paperless-datalake
-      IAM_PREFIX:       iam_dataset/train/
+      IAM_PREFIX:       ${IAM_PREFIX:-warehouse/iam_dataset/train/}
       IAM_POOL_SIZE:    ${DG_IAM_POOL_SIZE:-500}
       IAM_MAX_SHARDS:   ${DG_IAM_MAX_SHARDS:-3}
     networks:
