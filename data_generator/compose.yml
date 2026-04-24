@@ -34,7 +34,7 @@ services:
     # wrapper so the container runs continuously.
     entrypoint: ["/app/loop.sh"]
     environment:
-      PAPERLESS_URL:    http://webserver:8000
+      PAPERLESS_URL:    http://paperless-webserver-1:8000
       PAPERLESS_TOKEN:  ${PAPERLESS_TOKEN:?PAPERLESS_TOKEN env var must be set}
       RATE:             ${DG_RATE:-0.5}
       CYCLE_DURATION:   ${DG_CYCLE_DURATION:-600}
