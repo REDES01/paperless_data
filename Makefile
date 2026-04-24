@@ -1,5 +1,4 @@
 COMPOSE = docker compose -f docker/docker-compose.yaml
-CACHE_DIR = $(HOME)/paperless_cache
 
 # ── CHI@TACC Object Storage ──────────────────
 # Set these before running chi-* targets.
@@ -12,8 +11,8 @@ CHI_BUCKET ?= paperless-chi
 .PHONY: up down restart status logs clean
 .PHONY: up-db up-storage up-stream up-vector
 .PHONY: check-pg check-minio check-redpanda check-qdrant
-.PHONY: ingest ingest-iam ingest-squad augment-iam download-cache
-.PHONY: chi-ingest chi-ingest-iam chi-ingest-squad chi-augment-iam
+.PHONY: ingest ingest-iam augment-iam
+.PHONY: chi-ingest chi-ingest-iam chi-augment-iam
 .PHONY: chi-batch chi-batch-htr chi-batch-retrieval
 .PHONY: generate generate-api generate-traffic generate-stop
 .PHONY: demo-retrieval demo-htr
@@ -59,20 +58,13 @@ up-vector:
 	$(COMPOSE) up -d qdrant
 
 # ── Ingestion to local MinIO (dev/testing) ────
+#
+# IAM handwriting dataset only. SQuAD was in the original design for
+# retrieval model fine-tuning, but the retrieval path uses pretrained
+# mpnet directly — no contrastive training ever consumed SQuAD data.
+# Re-add an ingest-squad target here if a retriever fine-tune is built.
 
-download-cache:
-	@mkdir -p $(CACHE_DIR)
-	@test -f $(CACHE_DIR)/train-v2.0.json || \
-		(echo "Downloading SQuAD train..." && \
-		 wget -q -O $(CACHE_DIR)/train-v2.0.json \
-		 https://rajpurkar.github.io/SQuAD-explorer/dataset/train-v2.0.json)
-	@test -f $(CACHE_DIR)/dev-v2.0.json || \
-		(echo "Downloading SQuAD dev..." && \
-		 wget -q -O $(CACHE_DIR)/dev-v2.0.json \
-		 https://rajpurkar.github.io/SQuAD-explorer/dataset/dev-v2.0.json)
-	@echo "Cache ready: $(CACHE_DIR)"
-
-ingest: ingest-iam ingest-squad augment-iam
+ingest: ingest-iam augment-iam
 	@echo "Full ingestion pipeline complete (local MinIO)."
 
 ingest-iam:
@@ -82,16 +74,6 @@ ingest-iam:
 		-e MINIO_ACCESS_KEY=admin \
 		-e MINIO_SECRET_KEY=paperless_minio \
 		paperless-ingest python ingest_iam.py
-
-ingest-squad: download-cache
-	docker build -t paperless-ingest ./ingestion
-	docker run --rm --network docker_default \
-		-e MINIO_ENDPOINT=minio:9000 \
-		-e MINIO_ACCESS_KEY=admin \
-		-e MINIO_SECRET_KEY=paperless_minio \
-		-e CACHE_DIR=/cache \
-		-v $(CACHE_DIR):/cache:ro \
-		paperless-ingest python ingest_squad.py
 
 augment-iam:
 	docker build -t paperless-ingest ./ingestion
@@ -103,7 +85,7 @@ augment-iam:
 
 # ── Ingestion to CHI@TACC persistent storage ──
 
-chi-ingest: chi-ingest-iam chi-ingest-squad chi-augment-iam
+chi-ingest: chi-ingest-iam chi-augment-iam
 	@echo "Full ingestion pipeline complete (CHI@TACC)."
 
 chi-ingest-iam:
@@ -115,18 +97,6 @@ chi-ingest-iam:
 		-e MINIO_SECURE=true \
 		-e MINIO_BUCKET=$(CHI_BUCKET) \
 		paperless-ingest python ingest_iam.py
-
-chi-ingest-squad: download-cache
-	docker build -t paperless-ingest ./ingestion
-	docker run --rm \
-		-e MINIO_ENDPOINT=$(CHI_ENDPOINT) \
-		-e MINIO_ACCESS_KEY=$(CHI_ACCESS_KEY) \
-		-e MINIO_SECRET_KEY=$(CHI_SECRET_KEY) \
-		-e MINIO_SECURE=true \
-		-e MINIO_BUCKET=$(CHI_BUCKET) \
-		-e CACHE_DIR=/cache \
-		-v $(CACHE_DIR):/cache:ro \
-		paperless-ingest python ingest_squad.py
 
 chi-augment-iam:
 	docker build -t paperless-ingest ./ingestion
