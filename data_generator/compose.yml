@@ -11,7 +11,7 @@
 #
 # Env vars:
 #   PAPERLESS_TOKEN    required — API token for the Paperless admin user
-#   RATE               default 0.5  — events per second (upload-only mode)
+#   RATE               default 0.05  — events per second (upload-only mode)
 #   CYCLE_DURATION     default 600  — seconds per generator subprocess
 #   UPLOAD_ONLY        default true — if true, no searches/corrections/feedback
 #                                      (behavior_emulator handles those)
@@ -36,7 +36,7 @@ services:
     environment:
       PAPERLESS_URL:    http://paperless-webserver-1:8000
       PAPERLESS_TOKEN:  ${PAPERLESS_TOKEN:?PAPERLESS_TOKEN env var must be set}
-      RATE:             ${DG_RATE:-0.5}
+      RATE:             ${DG_RATE:-0.05}
       CYCLE_DURATION:   ${DG_CYCLE_DURATION:-600}
       UPLOAD_ONLY:      ${DG_UPLOAD_ONLY:-true}
       SLEEP_BETWEEN:    ${DG_SLEEP_BETWEEN:-5}
