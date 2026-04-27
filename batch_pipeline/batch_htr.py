@@ -240,8 +240,17 @@ def build_table(candidates: list[dict], split: str) -> pa.Table:
         "original_text": pa.array([c["original_text"] or "" for c in candidates], type=pa.string()),
         "source": pa.array(["user_correction"] * len(candidates), type=pa.string()),
         "split": pa.array([split] * len(candidates), type=pa.string()),
+        # corrected_at is a datetime when read from postgres directly, but
+        # an ISO-8601 string when deserialized from a JSON archive snapshot.
+        # Both shapes need to land as YYYY-MM-DD.
         "correction_date": pa.array(
-            [c["corrected_at"].strftime("%Y-%m-%d") for c in candidates], type=pa.string()
+            [
+                c["corrected_at"].strftime("%Y-%m-%d")
+                if hasattr(c["corrected_at"], "strftime")
+                else c["corrected_at"][:10]
+                for c in candidates
+            ],
+            type=pa.string(),
         ),
         "writer_id": pa.array(
             [str(c["user_id"]) if c["user_id"] else "unknown" for c in candidates],
@@ -324,6 +333,13 @@ def main():
     version = f"v_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
     log.info(f"Version: {version}")
 
+    # MinIO client up first — fetch_candidates (and the quality filter
+    # below) both need it, and the previous ordering used `mc` before
+    # the get_minio() call assigned it.
+    mc = get_minio()
+    if not mc.bucket_exists(BUCKET):
+        mc.make_bucket(BUCKET)
+
     # Step 1: Fetch candidates from PostgreSQL
     conn = get_pg()
     candidates = fetch_candidates(conn, mc)
@@ -336,9 +352,6 @@ def main():
     # Step 1a: Apply additional data-quality filters beyond the SQL-level
     # candidate selection (no-op corrections, invalid crop URLs, MinIO
     # misses, spam). See quality.py for the rules.
-    mc = get_minio()
-    if not mc.bucket_exists(BUCKET):
-        mc.make_bucket(BUCKET)
     candidates, quality_report = filter_candidates(candidates, minio_client=mc)
 
     if not candidates:
